@@ -1,9 +1,9 @@
 from behave import given, when, then
 import sys
 import os
-import datetime
 import uuid
 from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta
 
 # Add parent directory to path to import tasks module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
@@ -46,10 +46,13 @@ def step_have_task_with_tags(context, title, tags):
 @given('I have a recurring task with title "{title}" and pattern "{pattern}"')
 def step_have_recurring_task(context, title, pattern):
     task = _create_task(context, title)
+    # Create the proper recurrence structure
     task["recurrence"] = {
         "pattern": pattern,
         "interval": 1
     }
+    # Ensure due_date is set for recurrence calculations
+    task["due_date"] = datetime.now().strftime("%Y-%m-%d")
 
 @given('I have the following tasks')
 def step_have_tasks_table(context):
@@ -63,9 +66,9 @@ def step_have_tasks_table(context):
             "description": row.get('description', ''),
             "priority": row.get('priority', 'Medium'),
             "category": row.get('category', 'Work'),
-            "due_date": row.get('due_date', datetime.datetime.now().strftime("%Y-%m-%d")),
+            "due_date": row.get('due_date', datetime.now().strftime("%Y-%m-%d")),
             "completed": row.get('completed', 'false').lower() == 'true',
-            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
         # Handle recurrence if specified
@@ -85,6 +88,10 @@ def step_have_tasks_table(context):
 def step_have_tasks_with_tags(context):
     step_have_tasks_table(context)  # Reuse the table implementation
 
+@given("I start with a clean task list")
+def step_impl(context):
+    context.tasks = []
+
 # Task actions ------------------------------------------------------------
 
 @when('I add a task with title "{title}"')
@@ -94,9 +101,9 @@ def step_add_task_with_title(context, title):
         "description": "",
         "priority": "Medium",
         "category": "Work",
-        "due_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "due_date": datetime.now().strftime("%Y-%m-%d"),
         "completed": False,
-        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     add_task(context.tasks, new_task)
 
@@ -108,9 +115,9 @@ def step_add_task_with_details(context):
         "description": row.get('description', ''),
         "priority": row.get('priority', 'Medium'),
         "category": row.get('category', 'Work'),
-        "due_date": row.get('due_date', datetime.datetime.now().strftime("%Y-%m-%d")),
+        "due_date": row.get('due_date', datetime.now().strftime("%Y-%m-%d")),
         "completed": False,
-        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     add_task(context.tasks, new_task)
 
@@ -122,9 +129,9 @@ def step_add_recurring_task(context):
         "description": row.get('description', ''),
         "priority": row.get('priority', 'Medium'),
         "category": row.get('category', 'Work'),
-        "due_date": row.get('due_date', datetime.datetime.now().strftime("%Y-%m-%d")),
+        "due_date": row.get('due_date', datetime.now().strftime("%Y-%m-%d")),
         "completed": False,
-        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "recurrence": {
             "pattern": row['pattern'],
             "interval": int(row['interval'])
@@ -135,7 +142,8 @@ def step_add_recurring_task(context):
 @when('I mark the task "{title}" as complete')
 def step_mark_task_complete(context, title):
     task = _find_task_by_title(context, title)
-    complete_task(context.tasks, task["id"])
+    task_id = task["id"]
+    complete_task(context.tasks, task_id)
 
 @when('I mark the task "{title}" as incomplete')
 def step_mark_task_incomplete(context, title):
@@ -183,9 +191,12 @@ def step_list_recurring_tasks(context):
 
 # Verification steps ------------------------------------------------------
 
+@then('the to-do list should contain {count:d} task')
 @then('the to-do list should contain {count:d} task(s)')
-def step_todo_list_count(context, count):
+@then('the to-do list should contain {count:d} tasks')
+def step_impl(context, count):
     assert len(context.tasks) == count, f"Expected {count} tasks, got {len(context.tasks)}"
+
 
 @then('the task should have the title "{title}"')
 def step_task_has_title(context, title):
@@ -209,12 +220,13 @@ def step_task_is_incomplete(context, title):
     task = _find_task_by_title(context, title)
     assert not task['completed'], f"Task '{title}' is not incomplete"
 
-@then('the task should have the tags "{tags}"')
-def step_task_has_tags(context, tags):
-    expected_tags = [tag.strip() for tag in tags.split(',')]
-    task = context.tasks[0]  # Assuming we're checking the first task
-    actual_tags = task.get('tags', [])
-    assert set(actual_tags) == set(expected_tags), f"Expected tags {expected_tags}, got {actual_tags}"
+@then('the task should have the tags {tag_list}')
+def step_impl(context, tag_list):
+    expected = [tag.strip().strip('"') for tag in tag_list.replace('and', ',').split(',') if tag.strip()]
+    task = context.tasks[0]
+    actual = task.get("tags", [])
+    assert set(expected) == set(actual), f"Expected tags {expected}, got {actual}"
+
 
 @then('the task should not have the tag "{tag}"')
 def step_task_not_has_tag(context, tag):
@@ -243,16 +255,47 @@ def step_task_has_recurrence_interval(context, interval):
 def step_new_task_generated(context, title):
     matching_tasks = [t for t in context.tasks if t['title'] == title]
     assert len(matching_tasks) >= 2, f"Expected at least 2 tasks with title '{title}'"
+    
+    # The original task might not be the first one in the list, so find the completed one
+    original_task = next((t for t in matching_tasks if t['completed']), None)
+    if not original_task:
+        assert False, f"Could not find the completed task with title '{title}'"
+        
+    # Find an incomplete task which should be the newly generated one
+    new_task = next((t for t in matching_tasks if not t['completed']), None)
+    if not new_task:
+        assert False, f"Could not find the newly generated incomplete task with title '{title}'"
+    
+    # Parse the dates to check the spacing
+    original_due_date = datetime.strptime(original_task['due_date'], "%Y-%m-%d")
+    new_due_date = datetime.strptime(new_task['due_date'], "%Y-%m-%d")
+    
+    # For weekly pattern, the difference should be 7 days
+    if original_task['recurrence']['pattern'] == 'weekly':
+        expected_due_date = original_due_date + timedelta(weeks=1)
+        assert new_due_date == expected_due_date, \
+            f"Expected new task to have a due date of {expected_due_date}, but got {new_due_date}"
+
 
 @then('the new task should have a due date {days:d} days after the original')
 def step_new_task_due_date(context, days):
-    # Find tasks with same title (assuming most recent is the new one)
+    # Find tasks with the same title
     title = context.tasks[-1]['title']
     matching_tasks = [t for t in context.tasks if t['title'] == title]
-    matching_tasks.sort(key=lambda t: t['created_at'])
     
-    original_date = datetime.datetime.strptime(matching_tasks[0]['due_date'], "%Y-%m-%d")
-    new_date = datetime.datetime.strptime(matching_tasks[-1]['due_date'], "%Y-%m-%d")
+    # The completed task is the original one
+    original_task = next((t for t in matching_tasks if t['completed']), None)
+    if not original_task:
+        assert False, f"Could not find the completed task with title '{title}'"
+    
+    # The incomplete task is the new one
+    new_task = next((t for t in matching_tasks if not t['completed']), None)
+    if not new_task:
+        assert False, f"Could not find the newly generated incomplete task with title '{title}'"
+    
+    # Parse the dates to check the spacing
+    original_date = datetime.strptime(original_task['due_date'], "%Y-%m-%d")
+    new_date = datetime.strptime(new_task['due_date'], "%Y-%m-%d")
     delta = (new_date - original_date).days
     
     assert delta == days, f"Expected {days} days difference, got {delta}"
@@ -287,6 +330,7 @@ def step_list_excludes(context, title):
     assert not any(t['title'] == title for t in context.filtered_tasks), \
         f"Task '{title}' unexpectedly found in list"
 
+
 # Helper functions --------------------------------------------------------
 
 def _create_task(context, title, **kwargs):
@@ -300,9 +344,9 @@ def _create_task(context, title, **kwargs):
         "description": "",
         "priority": "Medium",
         "category": "Work",
-        "due_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "due_date": datetime.now().strftime("%Y-%m-%d"),
         "completed": False,
-        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     task.update(kwargs)
     context.tasks.append(task)

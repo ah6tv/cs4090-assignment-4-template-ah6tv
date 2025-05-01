@@ -6,10 +6,8 @@ Feature: Recurring Tasks
   Scenario: Create a daily recurring task
     Given the to-do list is empty
     When I add a recurring task with the following details:
-      | title       | Daily standup       |
-      | description | Team meeting        |
-      | pattern     | daily               |
-      | interval    | 1                   |
+      | title         | description   | pattern | interval |
+      | Daily standup | Team meeting  | daily   | 1        |
     Then the to-do list should contain 1 task
     And the task should be a recurring task
     And the task should have a recurrence pattern of "daily"

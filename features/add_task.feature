@@ -12,11 +12,8 @@ Feature: Add Task
   Scenario: Add a task with full details
     Given the to-do list is empty
     When I add a task with the following details:
-      | title       | Buy new laptop      |
-      | description | MacBook Pro 16-inch |
-      | priority    | High               |
-      | category    | Personal           |
-      | due_date    | 2025-05-10         |
+      | title          | description          | priority | category | due_date   |
+      | Buy new laptop | MacBook Pro 16-inch  | High     | Personal | 2025-05-10 |
     Then the to-do list should contain 1 task
     And the task should have the title "Buy new laptop"
     And the task should have the priority "High"

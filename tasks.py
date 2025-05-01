@@ -1,6 +1,9 @@
 import json
 import os
 from datetime import datetime, timedelta
+from copy import deepcopy
+from dateutil.relativedelta import relativedelta
+import uuid
 
 # File path for task storage
 DEFAULT_TASKS_FILE = "tasks.json"
@@ -43,7 +46,26 @@ def generate_unique_id(tasks):
     """
     if not tasks:
         return 1
-    return max([task["id"] for task in tasks], default=0) + 1
+    
+    # Convert all IDs to integers for comparison
+    ids = []
+    for task in tasks:
+        task_id = task.get("id")
+        if isinstance(task_id, str):
+            # Try to convert string IDs that are numeric
+            try:
+                ids.append(int(task_id))
+            except ValueError:
+                # If it's a UUID or other non-numeric string, skip it
+                continue
+        else:
+            ids.append(task_id)
+    
+    # If no valid numeric IDs were found, return 1
+    if not ids:
+        return 1
+        
+    return max(ids, default=0) + 1
 
 def filter_tasks_by_priority(tasks, priority):
     """
@@ -281,24 +303,59 @@ def add_recurring_task(tasks, task_data, file_path=DEFAULT_TASKS_FILE):
 
 def complete_task(tasks, task_id, file_path=DEFAULT_TASKS_FILE):
     """
-    Mark a task as completed.
+    Toggle the completion status of a task. If it's a recurring task and it's completed,
+    generate the next occurrence.
     
     Args:
         tasks (list): List of task dictionaries
-        task_id (int): ID of the task to mark as completed
+        task_id (int or str): ID of the task to toggle completion status
         file_path (str): Path to save the JSON file
         
     Returns:
-        bool: True if task was marked as completed, False otherwise
+        bool: True if task was successfully updated, False otherwise
     """
     for task in tasks:
         if task["id"] == task_id:
-            task["completed"] = True
-            task["completed_date"] = datetime.now().strftime("%Y-%m-%d")
+            # Toggle the completion status
+            task["completed"] = not task["completed"]
+            
+            if task["completed"]:
+                task["completed_date"] = datetime.now().strftime("%Y-%m-%d")
+            else:
+                task.pop("completed_date", None)  # Remove completion date if uncompleted
+
+            # Handle recurrence - Only create new instance if task is now completed
+            if "recurrence" in task and task["completed"]:
+                pattern = task["recurrence"].get("pattern")
+                interval = int(task["recurrence"].get("interval", 1))
+                due_date_str = task.get("due_date")
+
+                if pattern and due_date_str:
+                    due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
+                    
+                    if pattern == "daily":
+                        new_due = due_date + timedelta(days=interval)
+                    elif pattern == "weekly":
+                        new_due = due_date + timedelta(weeks=interval)
+                    elif pattern == "monthly":
+                        new_due = due_date + relativedelta(months=interval)
+                    else:
+                        new_due = None
+
+                    if new_due:
+                        # Create a copy of the task for the new occurrence
+                        new_task = deepcopy(task)
+                        new_task["id"] = str(uuid.uuid4())  # Generate new UUID
+                        new_task["completed"] = False  # Reset completion status
+                        new_task.pop("completed_date", None)  # Remove completion date
+                        new_task["due_date"] = new_due.strftime("%Y-%m-%d")  # Set new due date
+                        tasks.append(new_task)  # Add new task to task list
+
             save_tasks(tasks, file_path)
             return True
-    
+
     return False
+
 
 def generate_next_occurrence(tasks, task_id, file_path=DEFAULT_TASKS_FILE):
     """
